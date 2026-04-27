@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>替班名单</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: sans-serif; background: #1a1a2e; color: #e0e0e0; min-height: 100vh; }
+    #game { max-width: 800px; margin: 0 auto; padding: 12px; }
+    #status-bar { display: flex; gap: 8px; flex-wrap: wrap; padding: 8px; background: #16213e; border-radius: 6px; margin-bottom: 10px; }
+    .stat { padding: 4px 10px; background: #0f3460; border-radius: 4px; font-size: 14px; }
+    .stat span { color: #e94560; font-weight: bold; }
+    #phase-label { text-align: center; padding: 6px; font-size: 13px; color: #aaa; margin-bottom: 8px; }
+    #main-area { display: flex; gap: 10px; min-height: 300px; }
+    #workers-panel, #shifts-panel { flex: 1; background: #16213e; border-radius: 6px; padding: 8px; }
+    #workers-panel h3, #shifts-panel h3 { font-size: 14px; color: #aaa; margin-bottom: 6px; }
+    .worker-card { padding: 8px; margin: 4px 0; background: #0f3460; border-radius: 4px; cursor: grab; font-size: 13px; border: 2px solid transparent; }
+    .worker-card.selected { border-color: #e94560; }
+    .worker-card .name { font-weight: bold; }
+    .worker-card .info { font-size: 11px; color: #888; margin-top: 2px; }
+    .shift-slot { padding: 8px; margin: 4px 0; background: #0f3460; border-radius: 4px; min-height: 40px; font-size: 13px; border: 2px dashed #333; }
+    .shift-slot.assigned { border-style: solid; border-color: #533483; }
+    .shift-slot .label { font-weight: bold; }
+    .shift-slot .assigned-worker { color: #e94560; margin-top: 2px; }
+    #preview-panel { margin-top: 10px; padding: 8px; background: #16213e; border-radius: 6px; min-height: 40px; font-size: 13px; }
+    #action-bar { margin-top: 10px; display: flex; gap: 8px; justify-content: center; }
+    #action-bar button { padding: 8px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
+    .btn-primary { background: #e94560; color: #fff; }
+    .btn-secondary { background: #533483; color: #fff; }
+    #settle-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 100; }
+    #settle-overlay.show { display: flex; align-items: center; justify-content: center; }
+    #settle-panel { background: #16213e; border-radius: 8px; padding: 24px; max-width: 400px; width: 90%; text-align: center; }
+    #settle-panel h2 { margin-bottom: 12px; color: #e94560; }
+    #settle-panel .result { font-size: 14px; margin: 8px 0; }
+    #settle-panel button { margin-top: 16px; }
+  </style>
+</head>
+<body>
+  <div id="game">
+    <div id="status-bar"></div>
+    <div id="phase-label"></div>
+    <div id="main-area">
+      <div id="workers-panel"><h3>工人</h3><div id="worker-list"></div></div>
+      <div id="shifts-panel"><h3>岗位</h3><div id="shift-list"></div></div>
+    </div>
+    <div id="preview-panel"></div>
+    <div id="action-bar"></div>
+  </div>
+  <div id="settle-overlay">
+    <div id="settle-panel"></div>
+  </div>
+  <script src="src/main.js"></script>
+</body>
+</html>
