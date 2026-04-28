@@ -1,41 +1,35 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert');
-const { PHASE, createState, settleRound } = require('./main.js');
+const { PHASE, createState, settleRound, maxResentment } = require('./main.js');
 
 // ─── State Structure ───
 describe('createState', () => {
-  it('has all required state fields', () => {
+  it('has all Direction Lock required states', () => {
     const st = createState();
-    for (const key of ['resource', 'pressure', 'risk', 'relation', 'round']) {
-      assert.equal(typeof st[key], 'number', `missing or invalid: ${key}`);
-    }
+    assert.equal(typeof st.quota, 'number', 'missing quota');
+    assert.equal(typeof st.job_risk, 'number', 'missing job_risk');
+    assert.ok(st.resentment && typeof st.resentment === 'object', 'missing resentment');
   });
 
-  it('provides 4 workers and 3 shifts', () => {
-    const st = createState();
-    assert.equal(st.workers.length, 4);
-    assert.equal(st.shifts.length, 3);
-  });
-
-  it('workers have id, name, fatigue, skill, alive', () => {
+  it('has fatigue on each worker', () => {
     const st = createState();
     for (const w of st.workers) {
-      assert.ok(w.id);
-      assert.ok(w.name);
-      assert.equal(typeof w.fatigue, 'number');
-      assert.equal(typeof w.skill, 'number');
-      assert.equal(w.alive, true);
+      assert.equal(typeof w.fatigue, 'number', `${w.name} missing fatigue`);
     }
   });
 
-  it('shifts have id, name, danger, assignedId', () => {
+  it('has shift assignments with danger', () => {
     const st = createState();
+    assert.equal(st.shifts.length, 3);
     for (const s of st.shifts) {
-      assert.ok(s.id);
-      assert.ok(s.name);
       assert.equal(typeof s.danger, 'number');
       assert.equal(s.assignedId, null);
     }
+  });
+
+  it('provides 4 workers', () => {
+    const st = createState();
+    assert.equal(st.workers.length, 4);
   });
 });
 
@@ -50,16 +44,54 @@ describe('PHASE', () => {
   });
 });
 
-// ─── Settlement Logic ───
-describe('settleRound', () => {
-  it('gains resource from assigned workers (skill * 5)', () => {
-    const st = createState();
-    st.shifts[0].assignedId = 1; // 老王 skill=3 → +15
-    const prev = st.resource;
-    settleRound(st);
-    assert.equal(st.resource, prev + 15);
+// ─── maxResentment helper ───
+describe('maxResentment', () => {
+  it('returns 0 for empty resentment', () => {
+    assert.equal(maxResentment(createState()), 0);
   });
 
+  it('returns max value from network', () => {
+    const st = createState();
+    st.resentment = { '1-2': 10, '1-3': 25, '2-3': 5 };
+    assert.equal(maxResentment(st), 25);
+  });
+});
+
+// ─── Settlement: Quota (Survival Pressure) ───
+describe('settleRound — quota', () => {
+  it('reduces quota by skill*5 for assigned workers', () => {
+    const st = createState();
+    st.shifts[0].assignedId = 1; // 老王 skill=3 → -15
+    const prev = st.quota;
+    settleRound(st);
+    assert.equal(st.quota, prev - 15);
+  });
+
+  it('reduces quota contribution when worker fatigued (fatigue >= 50)', () => {
+    const st = createState();
+    st.workers[0].fatigue = 50;
+    st.shifts[0].assignedId = 1; // 老王 skill=3, base=15, reduced=9
+    const prev = st.quota;
+    settleRound(st);
+    assert.equal(st.quota, prev - 9);
+  });
+
+  it('returns quota_met when quota <= 0 after contributions', () => {
+    const st = createState();
+    st.quota = 10;
+    st.shifts[0].assignedId = 1; // skill=3 → 15 > 10
+    assert.equal(settleRound(st), 'quota_met');
+  });
+
+  it('returns ok when quota not met but no crash', () => {
+    const st = createState();
+    st.shifts[0].assignedId = 1; // -15, quota stays at 10
+    assert.equal(settleRound(st), 'ok');
+  });
+});
+
+// ─── Settlement: Fatigue (Survival Pressure) ───
+describe('settleRound — fatigue', () => {
   it('adds fatigue based on shift danger (danger * 10)', () => {
     const st = createState();
     st.shifts[2].assignedId = 1; // 夜班 danger=3 → +30
@@ -67,56 +99,106 @@ describe('settleRound', () => {
     assert.equal(st.workers[0].fatigue, 30);
   });
 
-  it('penalizes relation for empty shifts (-5 each)', () => {
+  it('spreads fatigue to other workers when >= 40 (diffusion)', () => {
     const st = createState();
+    st.workers[0].fatigue = 35; // +30 = 65 >= 40 → spread
+    st.shifts[2].assignedId = 1;
     settleRound(st);
-    assert.equal(st.relation, 50 - 3 * 5); // 35
+    // spread = floor(65 * 0.1) = 6
+    assert.ok(st.workers[1].fatigue >= 20 + 6, '小李 should gain spread fatigue');
+    assert.ok(st.workers[2].fatigue >= 10 + 6, '阿强 should gain spread fatigue');
   });
 
-  it('increases risk from shift danger (danger * 2)', () => {
-    const st = createState();
-    st.shifts[1].assignedId = 2; // 白班B danger=2 → risk +4
-    settleRound(st);
-    assert.ok(st.risk >= 4);
-  });
-
-  it('adds pressure and risk when fatigue >= 50', () => {
-    const st = createState();
-    st.workers[0].fatigue = 45;
-    st.shifts[2].assignedId = 1; // 夜班 danger=3 → +30 fatigue = 75 ≥ 50
-    settleRound(st);
-    assert.ok(st.pressure > 0);
-    assert.ok(st.risk > 6); // base 6 from danger + 5 from fatigue
-  });
-
-  it('returns ok for a normal round', () => {
-    const st = createState();
-    st.shifts[0].assignedId = 1;
-    assert.equal(settleRound(st), 'ok');
-  });
-
-  it('detects fatigue crash (fatigue >= 80)', () => {
+  it('returns fatigue_crash when any worker fatigue >= 80', () => {
     const st = createState();
     st.workers[0].fatigue = 75;
     st.shifts[0].assignedId = 1; // danger=1 → +10 = 85
-    const outcome = settleRound(st);
-    assert.equal(outcome, 'fatigue_crash');
+    assert.equal(settleRound(st), 'fatigue_crash');
+  });
+});
+
+// ─── Settlement: Job Risk (Risk Pressure) ───
+describe('settleRound — job_risk', () => {
+  it('accumulates job_risk from dangerous shifts (danger * 3)', () => {
+    const st = createState();
+    st.shifts[1].assignedId = 2; // 白班B danger=2 → +6
+    settleRound(st);
+    assert.equal(st.job_risk, 6);
   });
 
-  it('detects relation crash (relation <= 0)', () => {
+  it('returns risk_crash when job_risk >= 100', () => {
     const st = createState();
-    st.relation = 5;
-    // All shifts empty → -15, relation = -10
-    assert.equal(settleRound(st), 'relation_crash');
-  });
-
-  it('detects risk crash (risk >= 100)', () => {
-    const st = createState();
-    st.risk = 96;
-    st.shifts[2].assignedId = 1; // danger=3 → +6 = 102
+    st.job_risk = 94;
+    st.shifts[2].assignedId = 1; // danger=3 → +9 = 103
     assert.equal(settleRound(st), 'risk_crash');
   });
+});
 
+// ─── Settlement: Resentment (Risk Pressure) ───
+describe('settleRound — resentment', () => {
+  it('assigned workers resent idle workers (inequality)', () => {
+    const st = createState();
+    st.shifts[2].assignedId = 1; // 老王 → 夜班 danger=3, others idle
+    settleRound(st);
+    // 老王 resents 小李(2), 阿强(3), 大刘(4): +3*3=9 each
+    assert.equal(st.resentment['1-2'], 9);
+    assert.equal(st.resentment['1-3'], 9);
+    assert.equal(st.resentment['1-4'], 9);
+  });
+
+  it('high-danger assigned resents low-danger assigned (unfairness)', () => {
+    const st = createState();
+    st.shifts[2].assignedId = 1; // 老王 → 夜班 danger=3
+    st.shifts[0].assignedId = 2; // 小李 → 白班A danger=1
+    settleRound(st);
+    // diff=2, 老王 resents 小李: +2*2=4
+    assert.ok(st.resentment['1-2'] >= 4);
+  });
+
+  it('returns resentment_crash when any pair >= 50', () => {
+    const st = createState();
+    st.resentment = { '1-2': 45 };
+    st.shifts[2].assignedId = 1; // 老王 resents idle 小李: +9 → 54
+    assert.equal(settleRound(st), 'resentment_crash');
+  });
+});
+
+// ─── Settlement: Dual Pressure ───
+describe('settleRound — dual pressure', () => {
+  it('every assignment affects both quota (survival) and job_risk (risk)', () => {
+    const st = createState();
+    const prevQuota = st.quota;
+    const prevRisk = st.job_risk;
+    st.shifts[0].assignedId = 1;
+    settleRound(st);
+    assert.ok(st.quota < prevQuota, 'quota should decrease (survival)');
+    assert.ok(st.job_risk > prevRisk, 'job_risk should increase (risk)');
+  });
+
+  it('empty shifts create quota pressure AND resentment pressure', () => {
+    const st = createState();
+    st.shifts[0].assignedId = 1; // only one assigned, 2 empty
+    settleRound(st);
+    assert.ok(st.quota > 0, 'quota should remain (survival pressure)');
+    assert.ok(maxResentment(st) > 0, 'resentment should build (risk pressure)');
+  });
+
+  it('fatigue diffusion links survival (fatigue) to relationship (spread)', () => {
+    const st = createState();
+    st.workers[0].fatigue = 35;
+    st.shifts[2].assignedId = 1; // danger=3 → fatigue 65, spreads 6
+    settleRound(st);
+    const anySpread = st.workers.some(w => {
+      if (w.id === 1) return false;
+      const base = w.id === 2 ? 20 : w.id === 3 ? 10 : 5;
+      return w.fatigue > base;
+    });
+    assert.ok(anySpread, 'fatigue should spread to other workers');
+  });
+});
+
+// ─── Round Progression ───
+describe('settleRound — round', () => {
   it('increments round', () => {
     const st = createState();
     settleRound(st);

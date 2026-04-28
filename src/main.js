@@ -1,6 +1,13 @@
 /**
- * 替班名单 — 最小主循环入口
+ * 替班名单 — 核心状态与一次结算
  * Core Loop: 查看工人状态 -> 拖到岗位 -> 预览工分/疲劳 -> 确认排班 -> 结算崩溃/举报
+ *
+ * Required State (Direction Lock): quota, fatigue, job_risk, resentment, shift
+ *
+ * Dual-pressure design:
+ *   Every state change simultaneously affects:
+ *   - Survival/resource pressure (quota, fatigue)
+ *   - Relationship/risk pressure (job_risk, resentment)
  */
 
 // ─── Phases ───
@@ -24,12 +31,16 @@ const PHASE_LABELS = {
 function createState() {
   return {
     round: 1,
-    resource: 50,     // 工分/资源
-    pressure: 0,      // 压力
-    risk: 0,          // 风险
-    relation: 50,     // 关系
     phase: PHASE.VIEW,
     selectedWorkerId: null,
+
+    // Direction Lock required states
+    quota: 25,          // 配额: 本轮需要达成的工分目标
+    job_risk: 0,        // 岗位风险: 累积危险作业风险 (>=100 被系统淘汰)
+    resentment: {},     // 怨恨网络: "fromId-toId" -> 怨恨值 (>=50 举报爆发)
+    // fatigue: per-worker (workers[].fatigue)
+    // shift: assignment state (shifts[].assignedId)
+
     workers: [
       { id: 1, name: '老王', fatigue: 0,  skill: 3, alive: true },
       { id: 2, name: '小李', fatigue: 20, skill: 2, alive: true },
@@ -46,6 +57,12 @@ function createState() {
 
 let state = createState();
 
+// ─── Helpers ───
+function maxResentment(st) {
+  const vals = Object.values(st.resentment || {});
+  return vals.length ? Math.max(...vals) : 0;
+}
+
 // ─── DOM Refs ───
 const $ = (sel) => document.querySelector(sel);
 const statusBar   = () => $('#status-bar');
@@ -60,10 +77,9 @@ const settlePanel  = () => $('#settle-panel');
 // ─── Render Helpers ───
 function renderStatusBar() {
   statusBar().innerHTML = [
-    `资源: <span>${state.resource}</span>`,
-    `压力: <span>${state.pressure}</span>`,
-    `风险: <span>${state.risk}</span>`,
-    `关系: <span>${state.relation}</span>`,
+    `配额: <span>${state.quota}</span>`,
+    `岗位风险: <span>${state.job_risk}</span>`,
+    `最高怨恨: <span>${maxResentment(state)}</span>`,
     `轮次: <span>${state.round}</span>`,
   ].map(s => `<div class="stat">${s}</div>`).join('');
 }
@@ -103,9 +119,11 @@ function renderPreview() {
   const lines = state.shifts.map(s => {
     if (!s.assignedId) return `<div>${s.name}: 空岗 — 无工分</div>`;
     const w = state.workers.find(x => x.id === s.assignedId);
-    const gain = w.skill * 5;
+    const base = w.skill * 5;
+    const gain = w.fatigue >= 50 ? Math.max(1, Math.floor(base * 0.6)) : base;
     const fatigueGain = s.danger * 10;
-    return `<div>${s.name}: ${w.name} → 工分 +${gain} / 疲劳 +${fatigueGain}</div>`;
+    const riskGain = s.danger * 3;
+    return `<div>${s.name}: ${w.name} → 工分 ${gain} / 疲劳 +${fatigueGain} / 风险 +${riskGain}</div>`;
   });
   previewPanel().innerHTML = '<b>预览:</b>' + lines.join('');
 }
@@ -174,36 +192,107 @@ function confirmSchedule() {
 }
 
 // ─── Pure Settlement Logic (no DOM) ───
+//
+// Dual-pressure: every assignment changes BOTH:
+//   Survival side: quota contribution, fatigue accumulation
+//   Risk side:     job_risk increase, resentment building
+//
 function settleRound(st) {
-  st.shifts.forEach(s => {
-    if (!s.assignedId) return;
+  const assignedIds = new Set();
+  const assignments = [];
+
+  // 1. Process assignments → quota (survival) + fatigue (survival) + job_risk (risk)
+  for (const s of st.shifts) {
+    if (!s.assignedId) continue;
     const w = st.workers.find(x => x.id === s.assignedId);
-    const gain = w.skill * 5;
-    const fatigueGain = s.danger * 10;
-    st.resource += gain;
-    w.fatigue += fatigueGain;
-    if (w.fatigue >= 50) {
-      st.pressure += 10;
-      st.risk += 5;
+    if (!w || !w.alive) continue;
+
+    assignedIds.add(w.id);
+    assignments.push({ worker: w, shift: s });
+
+    // Survival: quota contribution (fatigued workers produce 60%)
+    const base = w.skill * 5;
+    const contribution = w.fatigue >= 50 ? Math.max(1, Math.floor(base * 0.6)) : base;
+    st.quota = Math.max(0, st.quota - contribution);
+
+    // Survival: fatigue accumulation
+    w.fatigue += s.danger * 10;
+
+    // Risk: job risk from dangerous assignments
+    st.job_risk += s.danger * 3;
+  }
+
+  // 2. Identify idle workers
+  const idleWorkers = st.workers.filter(w => w.alive && !assignedIds.has(w.id));
+
+  // 3. Risk: resentment — assigned resents idle (inequality pressure)
+  for (const { worker: aw, shift: as } of assignments) {
+    for (const iw of idleWorkers) {
+      const key = `${aw.id}-${iw.id}`;
+      st.resentment[key] = (st.resentment[key] || 0) + as.danger * 3;
     }
-    st.risk += s.danger * 2;
-  });
-  const emptyCount = st.shifts.filter(s => s.assignedId === null).length;
-  st.relation -= emptyCount * 5;
-  const anyCrash = st.workers.some(w => w.alive && w.fatigue >= 80);
+  }
+
+  // 4. Risk: resentment — high-danger resents low-danger (unfairness pressure)
+  if (assignments.length >= 2) {
+    const sorted = [...assignments].sort((a, b) => b.shift.danger - a.shift.danger);
+    for (let i = 0; i < sorted.length; i++) {
+      for (let j = i + 1; j < sorted.length; j++) {
+        const diff = sorted[i].shift.danger - sorted[j].shift.danger;
+        if (diff > 0) {
+          const key = `${sorted[i].worker.id}-${sorted[j].worker.id}`;
+          st.resentment[key] = (st.resentment[key] || 0) + diff * 2;
+        }
+      }
+    }
+  }
+
+  // 5. Survival+Risk link: fatigue diffusion
+  //    High fatigue (>=40) spreads floor(fatigue*0.1) to all other alive workers
+  for (const { worker: aw } of assignments) {
+    if (aw.fatigue >= 40) {
+      const spread = Math.floor(aw.fatigue * 0.1);
+      for (const w of st.workers) {
+        if (w.id !== aw.id && w.alive) {
+          w.fatigue += spread;
+        }
+      }
+    }
+  }
+
+  // 6. Check crash conditions
+  let fatigueCrash = false;
+  for (const w of st.workers) {
+    if (w.alive && w.fatigue >= 80) {
+      fatigueCrash = true;
+    }
+  }
+
+  let resentmentCrash = false;
+  for (const val of Object.values(st.resentment)) {
+    if (val >= 50) {
+      resentmentCrash = true;
+      break;
+    }
+  }
+
+  // 7. Advance round
   st.round += 1;
-  let outcome = 'ok';
-  if (anyCrash) outcome = 'fatigue_crash';
-  if (st.relation <= 0) outcome = 'relation_crash';
-  if (st.risk >= 100) outcome = 'risk_crash';
-  return outcome;
+
+  // 8. Outcome priority: fatigue > resentment > risk > quota > ok
+  if (fatigueCrash) return 'fatigue_crash';
+  if (resentmentCrash) return 'resentment_crash';
+  if (st.job_risk >= 100) return 'risk_crash';
+  if (st.quota <= 0) return 'quota_met';
+  return 'ok';
 }
 
 const OUTCOME_LABEL = {
-  ok: '本轮完成',
+  ok: '本轮完成 — 配额未达标',
+  quota_met: '✓ 配额达成!',
   fatigue_crash: '⚠ 工人疲劳崩溃!',
-  relation_crash: '⚠ 关系崩溃!',
-  risk_crash: '⚠ 风险过高，被系统淘汰!',
+  resentment_crash: '⚠ 怨恨爆发，工人举报!',
+  risk_crash: '⚠ 岗位风险过高，被系统淘汰!',
 };
 
 function settle() {
@@ -212,10 +301,9 @@ function settle() {
   const label = OUTCOME_LABEL[outcome] || outcome;
   settlePanel().innerHTML = `
     <h2>${label}</h2>
-    <div class="result">资源: ${state.resource}</div>
-    <div class="result">压力: ${state.pressure}</div>
-    <div class="result">风险: ${state.risk}</div>
-    <div class="result">关系: ${state.relation}</div>
+    <div class="result">配额剩余: ${state.quota}</div>
+    <div class="result">岗位风险: ${state.job_risk}</div>
+    <div class="result">最高怨恨: ${maxResentment(state)}</div>
     <div class="result">疲劳: ${state.workers.map(w => `${w.name}(${w.fatigue})`).join(' ')}</div>
     <button class="btn-primary" id="btn-next-round">下一轮</button>
   `;
@@ -224,9 +312,9 @@ function settle() {
 }
 
 function nextRound() {
-  // Reset assignments for new round
   state.shifts.forEach(s => s.assignedId = null);
   state.selectedWorkerId = null;
+  state.quota = 20 + state.round * 5;
   settleOverlay().classList.remove('show');
   state.phase = PHASE.VIEW;
   render();
@@ -248,14 +336,12 @@ function onShiftClick(e) {
   if (!slot) return;
   const sid = Number(slot.dataset.sid);
   if (state.selectedWorkerId === null) {
-    // Unassign if clicking an assigned slot with no worker selected
     const shift = state.shifts.find(s => s.id === sid);
     if (shift) { shift.assignedId = null; render(); }
     return;
   }
   const shift = state.shifts.find(s => s.id === sid);
   if (!shift) return;
-  // Remove worker from any other shift
   state.shifts.forEach(s => { if (s.assignedId === state.selectedWorkerId) s.assignedId = null; });
   shift.assignedId = state.selectedWorkerId;
   state.selectedWorkerId = null;
@@ -289,5 +375,5 @@ function init() {
 if (typeof document !== 'undefined') {
   document.addEventListener('DOMContentLoaded', init);
 } else if (typeof module !== 'undefined') {
-  module.exports = { PHASE, createState, settleRound };
+  module.exports = { PHASE, createState, settleRound, maxResentment };
 }
