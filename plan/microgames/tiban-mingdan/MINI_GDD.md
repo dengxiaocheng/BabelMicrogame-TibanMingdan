@@ -13,11 +13,11 @@
 
 ## State
 
-- resource
-- pressure
-- risk
-- relation
-- round
+- quota
+- fatigue
+- job_risk
+- resentment
+- shift
 
 ## UI
 
