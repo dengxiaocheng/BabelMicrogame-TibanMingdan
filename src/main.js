@@ -102,17 +102,17 @@ function renderStatusBar() {
   statusBar().innerHTML = `
     <div class="pressure-stat">
       <div class="stat-label">配额目标</div>
-      <div class="stat-value" style="color:${quotaColor}">${state.quota}</div>
+      <div class="stat-value${quotaPct > 60 ? ' urgent' : ''}" style="color:${quotaColor}">${state.quota}</div>
       <div class="pressure-bar"><div class="pressure-fill" style="width:${quotaPct}%;background:${quotaColor}"></div></div>
     </div>
     <div class="pressure-stat">
       <div class="stat-label">岗位风险</div>
-      <div class="stat-value" style="color:${riskColor}">${state.job_risk}<span style="font-size:12px;color:#888">/100</span></div>
+      <div class="stat-value${riskPct > 60 ? ' urgent' : ''}" style="color:${riskColor}">${state.job_risk}<span style="font-size:12px;color:#888">/100</span></div>
       <div class="pressure-bar"><div class="pressure-fill" style="width:${riskPct}%;background:${riskColor}"></div></div>
     </div>
     <div class="pressure-stat">
       <div class="stat-label">最高怨恨</div>
-      <div class="stat-value" style="color:${resColor}">${maxRes}<span style="font-size:12px;color:#888">/50</span></div>
+      <div class="stat-value${resPct > 60 ? ' urgent' : ''}" style="color:${resColor}">${maxRes}<span style="font-size:12px;color:#888">/50</span></div>
       <div class="pressure-bar"><div class="pressure-fill" style="width:${resPct}%;background:${resColor}"></div></div>
     </div>
     <div class="pressure-stat">
@@ -162,14 +162,19 @@ function renderWorkers() {
       if (r) reaction = `<div class="reaction">${r}</div>`;
     }
 
-    // Resentment dots
+    // Resentment connections — named direction links
     let resDots = '';
     const resEntries = Object.entries(state.resentment)
       .filter(([key]) => key.startsWith(`${w.id}-`) || key.endsWith(`-${w.id}`));
     if (resEntries.length > 0) {
-      resDots = '<div class="resentment-row">' + resEntries.map(([, v]) => {
+      resDots = '<div class="resentment-row">' + resEntries.map(([key, v]) => {
         const c = v >= 35 ? '#e94560' : v >= 15 ? '#f0a500' : '#4caf50';
-        return `<span class="resentment-dot" style="background:${c}" title="怨恨 ${v}"></span>`;
+        const [a, b] = key.split('-').map(Number);
+        const otherId = a === w.id ? b : a;
+        const other = state.workers.find(x => x.id === otherId);
+        const arrow = a === w.id ? '→' : '←';
+        const bg = v >= 35 ? 'rgba(233,69,96,0.15)' : v >= 15 ? 'rgba(240,165,0,0.12)' : 'rgba(76,175,80,0.1)';
+        return `<span class="resentment-link" style="background:${bg};border:1px solid ${c}"><span style="color:${c}">${arrow}</span>${other?.name||'?'}<span style="color:${c}">${v}</span></span>`;
       }).join('') + '</div>';
     }
 
