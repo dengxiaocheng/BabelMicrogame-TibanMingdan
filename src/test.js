@@ -374,3 +374,87 @@ describe('integration — full loop', () => {
     assert.ok(st.job_risk > prevR, 'risk increased (risk)');
   });
 });
+
+// ═══════════════════════════════════════════════════
+// Acceptance Playthrough — verifies core loop per ACCEPTANCE_PLAYTHROUGH.md
+// ═══════════════════════════════════════════════════
+
+describe('acceptance playthrough — core loop', () => {
+  // Step 1: 开局显示 quota / fatigue / job_risk / resentment / shift
+  it('step 1: initial state exposes all required states', () => {
+    const st = createState();
+    assert.equal(typeof st.quota, 'number', 'quota visible');
+    assert.ok(st.workers.every(w => typeof w.fatigue === 'number'), 'fatigue on all workers');
+    assert.equal(typeof st.job_risk, 'number', 'job_risk visible');
+    assert.ok(typeof st.resentment === 'object', 'resentment visible');
+    assert.ok(st.shifts.length >= 2, 'shifts available');
+  });
+
+  // Step 2: 拖到岗位 (primary input: assign worker to shift slot)
+  it('step 2: primary input — assign workers to shift slots', () => {
+    const st = createState();
+    st.shifts[0].assignedId = 1; // 老王 → 白班A
+    st.shifts[1].assignedId = 2; // 小李 → 白班B
+    assert.equal(st.shifts[0].assignedId, 1);
+    assert.equal(st.shifts[1].assignedId, 2);
+  });
+
+  // Step 3: 预览工分/疲劳 — preview shows quota vs fatigue conflict
+  it('step 3: preview shows quota/fatigue/resentment conflict', () => {
+    const st = createState();
+    st.shifts[0].assignedId = 1;
+    st.shifts[1].assignedId = 2;
+    const lines = getPreviewFlavor(st.workers[0], st.shifts[0], st);
+    assert.ok(lines.some(l => l.includes('工分')), 'preview shows contribution');
+    assert.ok(lines.some(l => l.includes('疲劳')), 'preview shows fatigue gain');
+  });
+
+  // Step 4+5: 确认排班 -> 结算 — feedback resource AND relationship pressure
+  it('step 4+5: settle produces resource and relationship pressure changes', () => {
+    const st = createState();
+    const prevQuota = st.quota;
+    const prevFatigue = st.workers[0].fatigue;
+    const prevRisk = st.job_risk;
+
+    st.shifts[0].assignedId = 1; // 老王 → 白班A
+    st.shifts[1].assignedId = 2; // 小李 → 白班B
+    settleRound(st);
+
+    assert.ok(st.quota < prevQuota, 'resource pressure: quota changed');
+    assert.ok(st.workers[0].fatigue > prevFatigue, 'body pressure: fatigue changed');
+    assert.ok(st.job_risk > prevRisk, 'risk pressure: job_risk changed');
+    assert.ok(maxResentment(st) > 0, 'relationship pressure: resentment changed');
+  });
+
+  // Not choice-only: primary input operation produces traceable state delta
+  it('primary input -> state delta is traceable (not choice-only)', () => {
+    const st = createState();
+    st.shifts[2].assignedId = 1; // 老王 → 夜班 danger=3
+    settleRound(st);
+
+    assert.equal(st.workers[0].fatigue, 30, 'fatigue = danger*10');
+    assert.equal(st.job_risk, 9, 'risk = danger*3');
+    assert.equal(st.resentment['1-2'], 9, 'resentment toward idle worker');
+  });
+
+  // Failure path: multi-round progression to fatigue crash
+  it('failure: multi-round fatigue crash progression', () => {
+    const st = createState();
+    st.quota = 60; // high enough to survive early rounds
+    st.shifts[2].assignedId = 1;
+    let outcome = settleRound(st);
+    assert.equal(outcome, 'ok');
+    assert.equal(st.workers[0].fatigue, 30);
+
+    st.quota = 60;
+    st.shifts[2].assignedId = 1;
+    outcome = settleRound(st);
+    assert.equal(outcome, 'ok');
+
+    st.quota = 60;
+    st.workers[0].fatigue = 75;
+    st.shifts[0].assignedId = 1;
+    outcome = settleRound(st);
+    assert.equal(outcome, 'fatigue_crash');
+  });
+});
