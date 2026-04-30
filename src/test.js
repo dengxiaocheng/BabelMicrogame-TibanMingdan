@@ -1,6 +1,12 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert');
 const { PHASE, createState, settleRound, maxResentment } = require('./main.js');
+const { pickEvent, applyEvent, EVENTS } = require('./content/events');
+const {
+  getFatigueFlavor, getResentmentFlavor, getQuotaFlavor, getRiskFlavor,
+  getWorkerReaction, getPreviewFlavor, getSettlementDetail,
+  getResentmentEdgeText, OUTCOME_NARRATION,
+} = require('./content/flavor');
 
 // ─── State Structure ───
 describe('createState', () => {
@@ -203,5 +209,168 @@ describe('settleRound — round', () => {
     const st = createState();
     settleRound(st);
     assert.equal(st.round, 2);
+  });
+});
+
+// ═══════════════════════════════════════════════════
+// Integration: state + content + full loop
+// ═══════════════════════════════════════════════════
+
+// ─── Event Integration ───
+describe('integration — events', () => {
+  it('pickEvent returns null before round 2', () => {
+    const st = createState();
+    assert.equal(pickEvent(st), null);
+  });
+
+  it('pickEvent returns an event when round >= 2 and conditions met', () => {
+    const st = createState();
+    st.round = 2;
+    const ev = pickEvent(st);
+    // May or may not find one depending on conditions, but should not throw
+    assert.ok(ev === null || typeof ev.text === 'function');
+  });
+
+  it('applyEvent mutates state and returns narrative text', () => {
+    const st = createState();
+    st.round = 3;
+    // Force heatwave (no target, always eligible at round 3-6)
+    const heatwave = EVENTS.find(e => e.id === 'heatwave');
+    const text = applyEvent(st, heatwave);
+    assert.equal(typeof text, 'string');
+    assert.ok(text.length > 0, 'event should produce narrative text');
+    assert.ok(st.workers.every(w => w.fatigue >= 8), 'heatwave adds fatigue to all');
+  });
+
+  it('event application preserves state invariants', () => {
+    const st = createState();
+    st.round = 3;
+    const ev = pickEvent(st);
+    if (ev) {
+      applyEvent(st, ev);
+      assert.ok(st.quota >= 0);
+      assert.ok(st.round === 3, 'applyEvent should not change round');
+    }
+  });
+});
+
+// ─── Flavor Integration ───
+describe('integration — flavor', () => {
+  it('getWorkerReaction returns text for fatigued worker', () => {
+    const st = createState();
+    st.workers[0].fatigue = 60;
+    st.shifts[0].assignedId = 1;
+    const reaction = getWorkerReaction(st.workers[0], st);
+    assert.ok(typeof reaction === 'string', 'should return reaction text');
+  });
+
+  it('getPreviewFlavor returns actionable lines', () => {
+    const st = createState();
+    const lines = getPreviewFlavor(st.workers[0], st.shifts[2], st);
+    assert.ok(Array.isArray(lines));
+    assert.ok(lines.length >= 3, 'should show contribution, fatigue, risk');
+  });
+
+  it('getSettlementDetail produces narration for each outcome', () => {
+    for (const outcome of ['ok', 'quota_met', 'fatigue_crash', 'resentment_crash', 'risk_crash']) {
+      const st = createState();
+      const detail = getSettlementDetail(outcome, st);
+      assert.ok(detail.narration.length > 0, `${outcome} should have narration`);
+      assert.ok(Array.isArray(detail.warnings), `${outcome} should have warnings array`);
+    }
+  });
+
+  it('OUTCOME_NARRATION covers all game-ending outcomes', () => {
+    for (const key of ['fatigue_crash', 'resentment_crash', 'risk_crash']) {
+      assert.ok(OUTCOME_NARRATION[key], `${key} missing narration`);
+    }
+  });
+
+  it('flavor tiers match crash thresholds', () => {
+    // fatigue crash at 80 → should be in critical or crash tier
+    const f = getFatigueFlavor(80);
+    assert.ok(f.tone === 'critical' || f.tone === 'crash', '80 fatigue should be critical/crash');
+    // resentment crash at 50
+    const r = getResentmentFlavor(50);
+    assert.ok(r.tone === 'critical', '50 resentment should be critical');
+    // risk crash at 100
+    const k = getRiskFlavor(100);
+    assert.ok(k.tone === 'critical', '100 risk should be critical');
+  });
+});
+
+// ─── Full Multi-Round Loop ───
+describe('integration — full loop', () => {
+  it('can complete a full round: assign → settle → event → next round', () => {
+    const st = createState();
+    // Round 1: assign 2 workers
+    st.shifts[0].assignedId = 1; // 老王 → 白班A
+    st.shifts[1].assignedId = 2; // 小李 → 白班B
+    const outcome = settleRound(st);
+    assert.equal(st.round, 2);
+    assert.ok(['ok', 'quota_met'].includes(outcome), 'should not crash with safe assignments');
+
+    // Trigger event for round 2
+    const ev = pickEvent(st);
+    if (ev) applyEvent(st, ev);
+
+    // Round 2: assign again
+    st.shifts[0].assignedId = 3; // 阿强 → 白班A
+    st.shifts[1].assignedId = 4; // 大刘 → 白班B
+    const outcome2 = settleRound(st);
+    assert.equal(st.round, 3);
+    assert.ok(typeof outcome2 === 'string');
+  });
+
+  it('fatigue crash ends the game (not ok)', () => {
+    const st = createState();
+    st.workers[0].fatigue = 75;
+    st.shifts[0].assignedId = 1; // danger=1 → +10 = 85 → crash
+    const outcome = settleRound(st);
+    assert.equal(outcome, 'fatigue_crash');
+    // Verify settlement detail works for this outcome
+    const detail = getSettlementDetail(outcome, st);
+    assert.ok(detail.narration.includes('倒下'));
+  });
+
+  it('resentment crash ends the game', () => {
+    const st = createState();
+    st.resentment = { '1-2': 45 };
+    st.shifts[2].assignedId = 1; // 老王 resents idle 小李: +9 → 54
+    const outcome = settleRound(st);
+    assert.equal(outcome, 'resentment_crash');
+    const detail = getSettlementDetail(outcome, st);
+    assert.ok(detail.narration.includes('举报'));
+  });
+
+  it('risk crash ends the game', () => {
+    const st = createState();
+    st.job_risk = 94;
+    st.shifts[2].assignedId = 1; // danger=3 → +9 = 103
+    const outcome = settleRound(st);
+    assert.equal(outcome, 'risk_crash');
+    const detail = getSettlementDetail(outcome, st);
+    assert.ok(detail.narration.includes('事故'));
+  });
+
+  it('quota met is a valid ending', () => {
+    const st = createState();
+    st.quota = 10;
+    st.shifts[0].assignedId = 1; // skill=3 → 15 > 10
+    const outcome = settleRound(st);
+    assert.equal(outcome, 'quota_met');
+    const detail = getSettlementDetail(outcome, st);
+    assert.ok(detail.narration.length > 0);
+  });
+
+  it('dual pressure: assignments reduce quota AND increase risk simultaneously', () => {
+    const st = createState();
+    const prevQ = st.quota;
+    const prevR = st.job_risk;
+    st.shifts[0].assignedId = 1;
+    st.shifts[1].assignedId = 2;
+    settleRound(st);
+    assert.ok(st.quota < prevQ, 'quota decreased (survival)');
+    assert.ok(st.job_risk > prevR, 'risk increased (risk)');
   });
 });

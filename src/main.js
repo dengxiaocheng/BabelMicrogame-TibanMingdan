@@ -318,9 +318,9 @@ function renderActions() {
 // ─── Main Render ───
 function render() {
   renderStatusBar();
+  const existingBanner = document.querySelector('.event-banner');
+  if (existingBanner) existingBanner.remove();
   if (state.currentEvent) {
-    const existing = document.querySelector('.event-banner');
-    if (existing) existing.remove();
     statusBar().insertAdjacentHTML('afterend',
       `<div class="event-banner">${state.currentEvent}</div>`);
   }
@@ -339,8 +339,11 @@ function startAssign() {
 }
 
 function goToPreview() {
-  const anyAssigned = state.shifts.some(s => s.assignedId !== null);
-  if (!anyAssigned) return;
+  const assignedCount = state.shifts.filter(s => s.assignedId !== null).length;
+  if (assignedCount < 2) {
+    previewPanel().innerHTML = '<div style="color:#f0a500;padding:8px;font-size:13px;">至少安排两名工人到不同岗位，才能预览排班效果。</div>';
+    return;
+  }
   state.phase = PHASE.PREVIEW;
   render();
 }
@@ -469,6 +472,7 @@ function settle() {
   const outcome = settleRound(state);
   state.phase = PHASE.SETTLE;
   const label = OUTCOME_LABEL[outcome] || outcome;
+  const isEnding = outcome !== 'ok';
   let narration = '';
   if (contentFlavor) {
     const d = contentFlavor.getSettlementDetail(outcome, state);
@@ -486,14 +490,24 @@ function settle() {
     </div>`;
   }).join('');
 
+  const endingBadge = isEnding
+    ? `<div style="display:inline-block;padding:4px 16px;background:${outcome === 'quota_met' ? '#4caf50' : '#e94560'};color:#fff;border-radius:20px;font-size:12px;margin-bottom:12px;">${outcome === 'quota_met' ? '达成结局' : '崩溃结局'}</div>`
+    : '';
+  const actionBtn = isEnding
+    ? '<button class="btn-primary" id="btn-restart">重新开始</button>'
+    : '<button class="btn-primary" id="btn-next-round">下一轮</button>';
+  const maxRes = maxResentment(state);
+  const resCol = maxRes > 25 ? '#e94560' : maxRes > 10 ? '#f0a500' : '#4caf50';
+
   settlePanel().innerHTML = `
+    ${endingBadge}
     <h2>${label}</h2>
     ${narration}
     <div style="margin:10px 0;">配额剩余: <b style="color:${state.quota > 0 ? '#e94560' : '#4caf50'}">${state.quota}</b></div>
     <div style="margin:10px 0;">岗位风险: <b style="color:${dangerColor(state.job_risk / 3)}">${state.job_risk}</b></div>
-    <div style="margin:10px 0;">最高怨恨: <b style="color:${state.resentment ? '#f0a500' : '#4caf50'}">${maxResentment(state)}</b></div>
+    <div style="margin:10px 0;">最高怨恨: <b style="color:${resCol}">${maxRes}</b></div>
     ${workerBars}
-    <button class="btn-primary" id="btn-next-round">下一轮</button>
+    ${actionBtn}
   `;
   settleOverlay().classList.add('show');
   render();
@@ -506,6 +520,12 @@ function nextRound() {
   settleOverlay().classList.remove('show');
   triggerRoundEvent(state);
   state.phase = PHASE.VIEW;
+  render();
+}
+
+function restartGame() {
+  state = createState();
+  settleOverlay().classList.remove('show');
   render();
 }
 
@@ -548,6 +568,7 @@ function onActionClick(e) {
   else if (id === 'btn-confirm') confirmSchedule();
   else if (id === 'btn-settle') settle();
   else if (id === 'btn-next-round') nextRound();
+  else if (id === 'btn-restart') restartGame();
 }
 
 // ─── Drag and Drop (Desktop) ───
