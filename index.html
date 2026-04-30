@@ -8,32 +8,91 @@
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: sans-serif; background: #1a1a2e; color: #e0e0e0; min-height: 100vh; }
     #game { max-width: 800px; margin: 0 auto; padding: 12px; }
-    #status-bar { display: flex; gap: 8px; flex-wrap: wrap; padding: 8px; background: #16213e; border-radius: 6px; margin-bottom: 10px; }
-    .stat { padding: 4px 10px; background: #0f3460; border-radius: 4px; font-size: 14px; }
-    .stat span { color: #e94560; font-weight: bold; }
-    #phase-label { text-align: center; padding: 6px; font-size: 13px; color: #aaa; margin-bottom: 8px; }
+
+    /* Status bar — pressure gauges */
+    #status-bar { display: flex; gap: 8px; flex-wrap: wrap; padding: 10px; background: #16213e; border-radius: 6px; margin-bottom: 10px; }
+    .pressure-stat { flex: 1; min-width: 90px; padding: 6px 10px; background: #0f3460; border-radius: 4px; }
+    .stat-label { font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; }
+    .stat-value { font-size: 18px; font-weight: bold; margin: 2px 0; }
+    .pressure-bar { height: 4px; background: #1a1a2e; border-radius: 2px; margin-top: 4px; overflow: hidden; }
+    .pressure-fill { height: 100%; border-radius: 2px; transition: width 0.3s, background 0.3s; }
+
+    /* Phase label */
+    #phase-label { text-align: center; padding: 8px; font-size: 14px; color: #aaa; margin-bottom: 8px; }
+    .phase-pressure { font-size: 13px; color: #f0a500; margin-top: 4px; }
+    .phase-pressure b { color: #e94560; font-size: 16px; }
+
+    /* Main area */
     #main-area { display: flex; gap: 10px; min-height: 300px; }
-    #workers-panel, #shifts-panel { flex: 1; background: #16213e; border-radius: 6px; padding: 8px; }
-    #workers-panel h3, #shifts-panel h3 { font-size: 14px; color: #aaa; margin-bottom: 6px; }
-    .worker-card { padding: 8px; margin: 4px 0; background: #0f3460; border-radius: 4px; cursor: grab; font-size: 13px; border: 2px solid transparent; }
+    #workers-panel, #shifts-panel { flex: 1; background: #16213e; border-radius: 6px; padding: 10px; }
+    #workers-panel h3, #shifts-panel h3 { font-size: 14px; color: #aaa; margin-bottom: 8px; }
+
+    /* Worker cards — draggable with fatigue bar */
+    .worker-card { padding: 10px; margin: 6px 0; background: #0f3460; border-radius: 6px; font-size: 13px; border: 2px solid transparent; transition: all 0.2s; user-select: none; }
+    .worker-card.draggable { cursor: grab; }
+    .worker-card.draggable:hover { border-color: #533483; transform: translateY(-1px); }
     .worker-card.selected { border-color: #e94560; }
-    .worker-card .name { font-weight: bold; }
-    .worker-card .info { font-size: 11px; color: #888; margin-top: 2px; }
-    .shift-slot { padding: 8px; margin: 4px 0; background: #0f3460; border-radius: 4px; min-height: 40px; font-size: 13px; border: 2px dashed #333; }
+    .worker-card.dragging { opacity: 0.4; transform: scale(0.95); }
+    .card-header { display: flex; justify-content: space-between; align-items: center; }
+    .card-header .name { font-weight: bold; font-size: 15px; }
+    .assigned-tag { font-size: 11px; color: #e94560; }
+    .fatigue-bar-wrap { height: 4px; background: #1a1a2e; border-radius: 2px; margin: 5px 0 3px; }
+    .fatigue-bar-fill { height: 100%; border-radius: 2px; transition: width 0.3s, background 0.3s; }
+    .card-info { font-size: 11px; color: #888; }
+    .reaction { font-size: 11px; color: #c90; margin-top: 3px; font-style: italic; }
+    .resentment-row { display: flex; gap: 3px; margin-top: 3px; align-items: center; }
+    .resentment-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+
+    /* Shift slots — drop targets with danger badges */
+    .shift-slot { padding: 10px; margin: 6px 0; background: #0f3460; border-radius: 6px; min-height: 50px; font-size: 13px; border: 2px dashed #333; transition: all 0.2s; }
+    .shift-slot.droppable { border-color: #533483; }
     .shift-slot.assigned { border-style: solid; border-color: #533483; }
-    .shift-slot .label { font-weight: bold; }
-    .shift-slot .assigned-worker { color: #e94560; margin-top: 2px; }
-    #preview-panel { margin-top: 10px; padding: 8px; background: #16213e; border-radius: 6px; min-height: 40px; font-size: 13px; }
+    .shift-slot.drag-over { border-color: #e94560; background: rgba(233,69,96,0.1); box-shadow: inset 0 0 15px rgba(233,69,96,0.15); }
+    .slot-header { display: flex; justify-content: space-between; align-items: center; }
+    .slot-name { font-weight: bold; font-size: 15px; }
+    .danger-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; color: #fff; font-weight: bold; }
+    .assigned-worker { color: #e94560; margin-top: 4px; font-size: 14px; }
+    .drop-hint { color: #444; font-size: 11px; font-style: italic; margin-top: 4px; }
+    .empty-warning { color: #e94560; font-size: 11px; margin-top: 2px; }
+
+    /* Live preview (shown during drag) */
+    .live-preview { padding: 6px 8px; font-size: 11px; background: rgba(240,165,0,0.1); border: 1px solid rgba(240,165,0,0.3); border-radius: 4px; margin-top: 6px; color: #ccc; line-height: 1.5; }
+
+    /* Preview panel — conflict analysis */
+    #preview-panel { margin-top: 10px; padding: 10px; background: #16213e; border-radius: 6px; font-size: 13px; }
+    .preview-line { padding: 8px 0; border-bottom: 1px solid #1a1a2e; }
+    .preview-line.empty { color: #e94560; }
+    .preview-stat { display: inline-block; font-size: 11px; padding: 2px 6px; margin-right: 6px; background: #0f3460; border-radius: 3px; }
+    .preview-warn { color: #e94560; font-weight: bold; font-size: 11px; margin-left: 4px; }
+    .preview-summary { display: flex; gap: 16px; padding: 8px 0; border-bottom: 1px solid #333; margin-bottom: 8px; flex-wrap: wrap; }
+    .preview-summary span { font-size: 13px; }
+    .preview-summary .ok { color: #4caf50; }
+    .preview-summary .danger { color: #e94560; }
+    .conflict-panel { background: rgba(233,69,96,0.08); border: 1px solid rgba(233,69,96,0.3); border-radius: 6px; padding: 10px; margin-top: 10px; }
+    .conflict-title { font-weight: bold; color: #e94560; font-size: 13px; margin-bottom: 6px; }
+    .conflict-item { font-size: 12px; color: #f0a500; margin: 3px 0; padding-left: 10px; }
+
+    /* Action bar */
     #action-bar { margin-top: 10px; display: flex; gap: 8px; justify-content: center; }
-    #action-bar button { padding: 8px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
+    #action-bar button { padding: 10px 24px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: bold; transition: transform 0.1s; }
+    #action-bar button:hover { transform: translateY(-1px); }
     .btn-primary { background: #e94560; color: #fff; }
+    .btn-primary:hover { background: #d63851; }
     .btn-secondary { background: #533483; color: #fff; }
+    .btn-secondary:hover { background: #6a4ca5; }
+
+    /* Settle overlay */
     #settle-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 100; }
     #settle-overlay.show { display: flex; align-items: center; justify-content: center; }
-    #settle-panel { background: #16213e; border-radius: 8px; padding: 24px; max-width: 400px; width: 90%; text-align: center; }
-    #settle-panel h2 { margin-bottom: 12px; color: #e94560; }
-    #settle-panel .result { font-size: 14px; margin: 8px 0; }
-    #settle-panel button { margin-top: 16px; }
+    #settle-panel { background: #16213e; border-radius: 10px; padding: 28px; max-width: 420px; width: 90%; text-align: center; }
+    #settle-panel h2 { margin-bottom: 14px; color: #e94560; font-size: 20px; }
+    #settle-panel .result { font-size: 14px; margin: 6px 0; }
+    #settle-panel button { margin-top: 20px; }
+    .settle-bar-wrap { height: 6px; background: #1a1a2e; border-radius: 3px; margin: 4px 0 10px; }
+    .settle-bar-fill { height: 100%; border-radius: 3px; }
+
+    /* Event banner */
+    .event-banner { padding: 8px 12px; background: linear-gradient(90deg, #2a1a00, #1a1a2e); color: #fa0; font-size: 13px; border-radius: 6px; margin-bottom: 8px; line-height: 1.5; border-left: 3px solid #fa0; }
   </style>
 </head>
 <body>
