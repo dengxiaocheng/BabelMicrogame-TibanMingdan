@@ -37,6 +37,7 @@ function createState() {
     // Direction Lock required states
     quota: 25,          // 配额: 本轮需要达成的工分目标
     job_risk: 0,        // 岗位风险: 累积危险作业风险 (>=100 被系统淘汰)
+    currentEvent: null,  // 当前轮事件文本 (content 提供)
     resentment: {},     // 怨恨网络: "fromId-toId" -> 怨恨值 (>=50 举报爆发)
     // fatigue: per-worker (workers[].fatigue)
     // shift: assignment state (shifts[].assignedId)
@@ -93,9 +94,20 @@ function renderWorkers() {
     const sel = w.id === state.selectedWorkerId ? ' selected' : '';
     const assigned = state.shifts.find(s => s.assignedId === w.id);
     const tag = assigned ? ` → ${assigned.name}` : '';
+    let fatLabel = w.fatigue;
+    if (contentFlavor) {
+      const f = contentFlavor.getFatigueFlavor(w.fatigue);
+      fatLabel = `${w.fatigue} (${f.label})`;
+    }
+    let reaction = '';
+    if (contentFlavor) {
+      const r = contentFlavor.getWorkerReaction(w, state);
+      if (r) reaction = `<div class="reaction" style="font-size:11px;color:#c90;">${r}</div>`;
+    }
     return `<div class="worker-card${sel}" data-wid="${w.id}">
       <div class="name">${w.name}${tag}</div>
-      <div class="info">疲劳 ${w.fatigue} | 技能 ${w.skill}</div>
+      <div class="info">疲劳 ${fatLabel} | 技能 ${w.skill}</div>
+      ${reaction}
     </div>`;
   }).join('');
 }
@@ -119,6 +131,10 @@ function renderPreview() {
   const lines = state.shifts.map(s => {
     if (!s.assignedId) return `<div>${s.name}: 空岗 — 无工分</div>`;
     const w = state.workers.find(x => x.id === s.assignedId);
+    if (contentFlavor) {
+      const fl = contentFlavor.getPreviewFlavor(w, s, state);
+      return `<div><b>${s.name}: ${w.name}</b><br>${fl.join('<br>')}</div>`;
+    }
     const base = w.skill * 5;
     const gain = w.fatigue >= 50 ? Math.max(1, Math.floor(base * 0.6)) : base;
     const fatigueGain = s.danger * 10;
@@ -154,6 +170,11 @@ function renderActions() {
 // ─── Main Render ───
 function render() {
   renderStatusBar();
+  if (state.currentEvent) {
+    const existing = document.querySelector('.event-banner');
+    if (existing) existing.remove();
+    statusBar().insertAdjacentHTML('afterend', `<div class="event-banner" style="padding:6px 10px;background:#2a1a00;color:#fa0;font-size:13px;">${state.currentEvent}</div>`);
+  }
   renderPhaseLabel();
   renderWorkers();
   renderShifts();
@@ -299,8 +320,15 @@ function settle() {
   const outcome = settleRound(state);
   state.phase = PHASE.SETTLE;
   const label = OUTCOME_LABEL[outcome] || outcome;
+  let narration = '';
+  if (contentFlavor) {
+    const d = contentFlavor.getSettlementDetail(outcome, state);
+    narration = `<div style="color:#ccc;margin:8px 0;">${d.narration}</div>` +
+      d.warnings.map(w => `<div style="color:#c90;font-size:12px;">⚠ ${w}</div>`).join('');
+  }
   settlePanel().innerHTML = `
     <h2>${label}</h2>
+    ${narration}
     <div class="result">配额剩余: ${state.quota}</div>
     <div class="result">岗位风险: ${state.job_risk}</div>
     <div class="result">最高怨恨: ${maxResentment(state)}</div>
@@ -316,6 +344,7 @@ function nextRound() {
   state.selectedWorkerId = null;
   state.quota = 20 + state.round * 5;
   settleOverlay().classList.remove('show');
+  triggerRoundEvent(state);
   state.phase = PHASE.VIEW;
   render();
 }
@@ -369,6 +398,20 @@ function init() {
     onActionClick(e);
   });
   render();
+}
+
+// ─── Content Integration (optional, graceful fallback) ───
+let contentEvents, contentFlavor;
+try {
+  contentEvents = require('./content/events');
+  contentFlavor = require('./content/flavor');
+} catch (e) { contentEvents = contentFlavor = null; }
+
+function triggerRoundEvent(st) {
+  if (!contentEvents) return;
+  st.currentEvent = null;
+  const ev = contentEvents.pickEvent(st);
+  if (ev) st.currentEvent = contentEvents.applyEvent(st, ev);
 }
 
 // Browser init / Node.js export
