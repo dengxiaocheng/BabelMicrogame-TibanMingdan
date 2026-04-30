@@ -125,7 +125,17 @@ function renderPhaseLabel() {
   const label = PHASE_LABELS[state.phase] || '';
   let extra = '';
   if (state.phase === PHASE.VIEW) {
-    extra = `<div class="phase-pressure">需要完成 <b>${state.quota}</b> 工分 — 拖动工人到岗位以达成配额</div>`;
+    // Build pressure callout showing core shortage and worker/shift status
+    const fatigued = state.workers.filter(w => w.alive && w.fatigue >= 30);
+    const emptyCount = state.shifts.filter(s => s.assignedId === null).length;
+    const totalSkill = state.workers.filter(w => w.alive).reduce((s, w) => s + w.skill, 0);
+    const maxOutput = totalSkill * 5;
+    const items = [`需要完成 <b>${state.quota}</b> 工分（全员上限 ${maxOutput}）`];
+    if (fatigued.length > 0)
+      items.push(`${fatigued.map(w => `${w.name}(疲劳${w.fatigue})`).join('、')} 状态不佳`);
+    if (emptyCount === state.shifts.length)
+      items.push(`所有 ${emptyCount} 个岗位空缺 — 点击"开始排班"拖入工人`);
+    extra = `<div class="pressure-callout"><div class="callout-title">本轮压力</div>${items.map(i => `<div class="callout-item">• ${i}</div>`).join('')}</div>`;
   }
   phaseLabel().innerHTML = `<div>${label}</div>${extra}`;
 }
@@ -683,10 +693,17 @@ function init() {
 
 // ─── Content Integration (optional, graceful fallback) ───
 let contentEvents, contentFlavor;
-try {
-  contentEvents = require('./content/events');
-  contentFlavor = require('./content/flavor');
-} catch (e) { contentEvents = contentFlavor = null; }
+// Browser: detect globals from events.js / flavor.js loaded via <script>
+if (typeof pickEvent === 'function') {
+  contentEvents = { pickEvent, applyEvent };
+  contentFlavor = { getFatigueFlavor, getResentmentFlavor, getQuotaFlavor, getRiskFlavor,
+    getWorkerReaction, getPreviewFlavor, getSettlementDetail, getResentmentEdgeText };
+} else if (typeof require !== 'undefined') {
+  try {
+    contentEvents = require('./content/events');
+    contentFlavor = require('./content/flavor');
+  } catch (e) { contentEvents = contentFlavor = null; }
+}
 
 function triggerRoundEvent(st) {
   if (!contentEvents) return;

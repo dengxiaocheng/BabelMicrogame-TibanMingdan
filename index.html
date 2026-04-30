@@ -93,6 +93,19 @@
 
     /* Event banner */
     .event-banner { padding: 8px 12px; background: linear-gradient(90deg, #2a1a00, #1a1a2e); color: #fa0; font-size: 13px; border-radius: 6px; margin-bottom: 8px; line-height: 1.5; border-left: 3px solid #fa0; }
+
+    /* Urgent pulse for pressure indicators */
+    @keyframes pulse-urgent { 0%,100%{opacity:1} 50%{opacity:.5} }
+    .stat-value.urgent { animation: pulse-urgent 1.2s ease-in-out infinite; }
+
+    /* Pressure callout — VIEW phase summary */
+    .pressure-callout { padding: 10px 14px; background: rgba(233,69,96,0.08); border-left: 3px solid #e94560; border-radius: 0 6px 6px 0; margin-bottom: 8px; font-size: 13px; line-height: 1.7; }
+    .callout-title { font-weight: bold; color: #e94560; margin-bottom: 4px; font-size: 14px; }
+    .callout-item { color: #ccc; }
+    .callout-item b { color: #f0a500; }
+
+    /* Resentment links — named direction connections */
+    .resentment-link { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; padding: 1px 6px; border-radius: 3px; margin: 1px 2px; }
   </style>
 </head>
 <body>
@@ -109,6 +122,8 @@
   <div id="settle-overlay">
     <div id="settle-panel"></div>
   </div>
+  <script src="src/content/events.js"></script>
+  <script src="src/content/flavor.js"></script>
   <script src="src/main.js"></script>
 </body>
 </html>
